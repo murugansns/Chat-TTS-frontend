@@ -1,368 +1,582 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import { prepareAudio, stopAudio } from './utils/audioPlayer';
+import './Chat.css';
+
+
+const addSpacesToText = (str) => {
+  if (!str) return '';
+  
+  let result = str.replace(/\s+/g, ' ').trim();
+  
+  result = result.replace(/([a-z])([A-Z])/g, '$1 $2');
+  
+  result = result.replace(/([.,!?])([^\s\d])/g, '$1 $2');
+  
+  result = result.replace(/([^\s(])(\()/g, '$1 $2');  
+  result = result.replace(/([)]])([A-Za-z0-9])/g, '$1 $2');  
+  
+  const contractions = ["let's", "i'm", "don't", "doesn't", "can't", "won't", "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't", "wouldn't", "shouldn't", "couldn't", "mustn't", "mightn't", "needn't", "i've", "you've", "we've", "they've", "i'd", "you'd", "he'd", "she'd", "we'd", "they'd", "i'll", "you'll", "he'll", "she'll", "we'll", "they'll", "i'm", "you're", "he's", "she's", "it's", "we're", "they're", "that's", "who's", "what's", "where's", "when's", "why's", "how's"];
+  
+  contractions.forEach(contraction => {
+    const regex = new RegExp(`\\b${contraction.replace("'", "'")}\\b`, 'gi');
+    result = result.replace(regex, contraction);
+  });
+  
+  result = result.replace(/(\w)-(?=\w)/g, '$1 - ');  
+  
+  result = result.replace(/\s*([.,!?;:])\s*/g, '$1 ');  
+  result = result.replace(/\s+([.,!?;:])/g, '$1');  
+  
+  result = result.replace(/"\s*([^"]+?)\s*"/g, '"$1"');
+  result = result.replace(/\'\s*([^\']+?)\s*\'/g, "'$1'");
+  
+  // Removed overly aggressive split that inserted spaces between an uppercase letter
+  // followed by a lowercase letter (e.g., "The" -> "T he"). We only split camelCase
+  // elsewhere using ([a-z])([A-Z]) rules.
+  
+  result = result.replace(/\s+/g, ' ').trim();
+  
+  if (result.length > 0) {
+    result = result.charAt(0).toUpperCase() + result.slice(1);
+  }
+  
+  return result;
+};
+
+const formatMessageText = (text) => {
+  if (!text) return '';
+  
+  const containsHtml = /<[a-z][\s\S]*>/i.test(text);
+  
+  if (containsHtml) {
+    return text;
+  }
+  
+  let formattedText = addSpacesToText(text);
+  
+  if (formattedText.includes('Featured Projectsin Healthcare')) {
+    return formatHealthcareProjects(formattedText);
+  }
+  
+  if (formattedText.includes('A.') || formattedText.includes('B.') || formattedText.includes('C.') || formattedText.includes('D.')) {
+    return formatStructuredResponse(formattedText);
+  }
+  
+  formattedText = formattedText.replace(/([a-z])([A-Z])/g, '$1 $2'); 
+  formattedText = formattedText.replace(/([a-zA-Z])([A-Z])([a-z])/g, '$1 $2$3'); 
+  if (formattedText.includes('A.') || formattedText.includes('B.') || formattedText.includes('C.') || formattedText.includes('D.')) {
+    return formatStructuredResponse(formattedText);
+  }
+  
+  formattedText = formattedText.replace(/([a-z])([A-Z])/g, '$1 $2');    
+  formattedText = formattedText.replace(/([a-zA-Z])([A-Z])([a-z])/g, '$1 $2$3'); 
+  formattedText = formattedText.replace(/([a-z])([A-Z][a-z])/g, '$1 $2'); 
+  
+  const paragraphs = formattedText.split(/\n{2,}/);
+  const processedParagraphs = [];
+  
+  for (const paragraph of paragraphs) {
+    if (!paragraph.trim()) continue;
+    
+    const lines = paragraph.split('\n');
+    const processedLines = [];
+    let inList = false;
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+      
+      const bulletMatch = trimmedLine.match(/^\s*([•*\-]|\d+[.)])\s*/);
+      
+      if (bulletMatch) {
+        if (!inList) {
+          inList = true;
+          processedLines.push('<ul class="message-list">');
+        }
+        
+        const bullet = bulletMatch[0].trim();
+        const content = trimmedLine.substring(bulletMatch[0].length).trim();
+        processedLines.push(`<li class="list-item">${content}</li>`);
+      } else {
+        if (inList) {
+          inList = false;
+          processedLines.push('</ul>');
+        }
+        
+        if (trimmedLine) {
+          const processedLine = trimmedLine.charAt(0).toUpperCase() + trimmedLine.slice(1);
+          processedLines.push(`<p>${processedLine}</p>`);
+        }
+      }
+    }
+    
+    if (inList) {
+      processedLines.push('</ul>');
+    }
+    
+    if (processedLines.length > 0) {
+      processedParagraphs.push(processedLines.join(''));
+    }
+  }
+  
+  return processedParagraphs.join('\n\n');
+};
+
+const formatStructuredResponse = (text) => {
+  const lines = text.split('\n');
+  let result = [];
+  let currentSection = null;
+  let inList = false;
+  
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    
+    const sectionMatch = trimmedLine.match(/^([A-Z])\.\s*(.*)/);
+    
+    if (sectionMatch) {
+      if (inList) {
+        result.push('</ul>');
+        inList = false;
+      }
+      
+      const sectionTitle = sectionMatch[2] ? ` ${sectionMatch[2]}` : '';
+      result.push(`<h3 class="section-header">${sectionMatch[1]}.${sectionTitle}</h3>`);
+      currentSection = sectionMatch[1];
+    } 
+    else if (/^\s*([•*\-]|\d+[.)])\s*/.test(trimmedLine)) {
+      if (!inList) {
+        result.push('<ul class="section-list">');
+        inList = true;
+      }
+      
+      const bulletMatch = trimmedLine.match(/^\s*([•*\-]|\d+[.)])\s*/);
+      const bullet = bulletMatch ? bulletMatch[1] : '•';
+      const content = bulletMatch ? trimmedLine.substring(bulletMatch[0].length).trim() : trimmedLine;
+      
+      const projectMatch = content.match(/^(.+?)\s*–\s*(.+)$/);
+      if (projectMatch) {
+        result.push(`<li class="list-item"><strong>${projectMatch[1].trim()}</strong> – ${projectMatch[2].trim()}</li>`);
+      } else {
+        result.push(`<li class="list-item">${content}</li>`);
+      }
+    } 
+    else {
+      if (inList) {
+        result.push('</ul>');
+        inList = false;
+      }
+      
+      const processedLine = trimmedLine.charAt(0).toUpperCase() + trimmedLine.slice(1);
+      result.push(`<p>${processedLine}</p>`);
+    }
+  }
+  
+  if (inList) {
+    result.push('</ul>');
+  }
+  
+  return result.join('\n');
+};
+const formatHealthcareProjects = (text) => {
+  const cleanedText = addSpacesToText(text)
+    .replace(/\s+/g, ' ') 
+    .trim();
+  
+  let projects = [];
+  const projectMatches = cleanedText.matchAll(/(?:•|\*|\-)\s*([^•\n]+?)(?=\s*(?:•|\*|\-)|$)/g);
+  
+  for (const match of projectMatches) {
+    const projectText = match[1].trim();
+    if (projectText) {
+      const [name, ...descParts] = projectText.split(/[–\-:]/).map(s => s.trim());
+      const description = descParts.join(' ').replace(/\s+/g, ' ').trim();
+      
+      if (name) {
+        projects.push({
+          name: name.replace(/^\s*[0-9]+\.?\s*/, ''), 
+          description: description || 'No description available'
+        });
+      }
+    }
+  }
+  
+  if (projects.length === 0) {
+    projects = [
+      {
+        name: 'Medi Assist Portal',
+        description: 'HIPAA-compliant patient management system'
+      },
+      {
+        name: 'Tele Med Care App',
+        description: 'Video consultation and prescription handling'
+      }
+    ];
+  }
+
+  const sanitize = (html) => {
+    return DOMPurify.sanitize(html, { 
+      ALLOWED_TAGS: ['div', 'span', 'h3', 'strong', 'em', 'br'],
+      ALLOWED_ATTR: ['class']
+    });
+  };
+
+  const formattedProjects = projects.map(project => 
+    `<div class="project-item">
+      <span class="project-name">${sanitize(project.name)}</span>
+      <span class="project-desc">${sanitize(project.description)}</span>
+    </div>`
+  ).join('\n');
+
+  const htmlContent = `<div class="healthcare-project">
+    <h3>Featured Projects in Healthcare</h3>
+    <div class="project-list">
+      ${formattedProjects}
+    </div>
+  </div>`;
+
+  return htmlContent;
+};
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState({ message: '', type: '' });
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState(null);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [currentAudio, setCurrentAudio] = useState(null);
-  const fileInputRef = useRef(null);
+  const [streamedText, setStreamedText] = useState('');
+  
+  const eventSourceRef = useRef(null);
   const messagesEndRef = useRef(null);
-
-  // Auto-scroll to bottom when new messages are added
-  useEffect(() => {
+  const typingTimeoutRef = useRef(null);
+  
+  const audioPlayer = useRef({
+    currentAudio: null,
+    isPlaying: false,
+    audioContext: null,
+    ...Array(10).fill().reduce((acc, _, i) => ({ ...acc, [`audio_${i}`]: null }), {})
+  });
+  
+  const audioPlayerRef = audioPlayer;
+  
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, []);
 
-  // Handle file upload
-  const handleFileUpload = async (event) => {
-    console.log('🔄 File upload initiated');
-    const file = event.target.files[0];
-    
-    if (!file) {
-      console.log('❌ No file selected');
-      return;
-    }
-
-    console.log('📁 File selected:', {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      lastModified: new Date(file.lastModified).toISOString()
-    });
-
-    if (file.type !== 'application/pdf') {
-      console.log('❌ Invalid file type:', file.type);
-      alert('Please select a PDF file');
-      return;
-    }
-
-    console.log('✅ PDF file validated');
-
-    // Check if backend is reachable first
-    console.log('🔍 Checking backend connectivity...');
-    try {
-      const pingResponse = await fetch('http://192.168.1.218:8000/api/health', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        mode: 'cors',
-        // credentials: 'include'
-      });
-      console.log('🏥 Health check response:', {
-        status: pingResponse.status,
-        ok: pingResponse.ok,
-        statusText: pingResponse.statusText
-      });
-      
-      if (!pingResponse.ok) {
-        throw new Error('Backend server is not responding');
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (inputValue.trim()) {
+        handleSendMessage(inputValue);
+        setInputValue('');
       }
-      console.log('✅ Backend is reachable');
-    } catch (error) {
-      console.error('❌ Backend connection error:', error);
-      setUploadStatus('Error: Could not connect to the server. Please make sure the backend is running.');
-      return;
-    }
-
-    console.log('📦 Creating FormData...');
-    const formData = new FormData();
-    formData.append('file', file);
-    console.log('✅ FormData created with file');
-
-    const xhr = new XMLHttpRequest();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 30 second timeout
-
-    try {
-      console.log('🚀 Starting upload process...');
-      setUploadStatus({ message: 'Preparing upload...', type: 'info' });
-      setIsUploading(true);
-      setUploadProgress(0);
-      
-      const response = await new Promise((resolve, reject) => {
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const progress = Math.round((event.loaded / event.total) * 100);
-            const progressPercentage = Math.round(progress);
-            setUploadStatus({ message: `Uploading: ${progressPercentage}%`, type: 'uploading' });
-            setUploadProgress(progressPercentage);
-          }
-        };
-
-        xhr.onload = () => {
-          clearTimeout(timeoutId);
-          console.log('📋 Upload response:', {
-            status: xhr.status,
-            statusText: xhr.statusText,
-            responseText: xhr.responseText
-          });
-          
-          if (xhr.status >= 200 && xhr.status < 300) {
-            console.log('✅ Upload successful');
-            resolve(xhr);
-          } else {
-            console.error('❌ Upload failed with status:', xhr.status);
-            reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.responseText}`));
-          }
-        };
-
-        xhr.onerror = () => {
-          console.error('❌ XHR Error occurred:', {
-            status: xhr.status,
-            statusText: xhr.statusText,
-            readyState: xhr.readyState
-          });
-          clearTimeout(timeoutId);
-          if (xhr.status === 0) {
-            reject(new Error('Network error: Could not connect to the server. Please check your connection and make sure the backend is running on http://192.168.1.218:8000'));
-          } else {
-            reject(new Error(`Network error occurred: ${xhr.statusText || 'Unknown error'}`));
-          }
-        };
-        
-        xhr.onabort = () => {
-          console.log('⏹️ Upload was aborted');
-          clearTimeout(timeoutId);
-          reject(new Error('Upload was cancelled'));
-        };
-        
-        console.log('🌐 Opening XHR connection to: http://192.168.1.218:8000/api/upload');
-        xhr.open('POST', 'http://192.168.1.218:8000/api/v1/upload', true);
-        
-        // Set request headers if needed
-        // xhr.setRequestHeader('Accept', 'application/json');
-        
-        console.log('📤 Sending file...');
-        try {
-          xhr.send(formData);
-        } catch (error) {
-          console.error('❌ Error sending request:', error);
-          reject(error);
-        }
-
-        // Handle abort
-        controller.signal.addEventListener('abort', () => {
-          console.log('⏰ Upload timeout reached');
-          xhr.abort();
-          reject(new Error('Upload was aborted due to timeout'));
-        });
-      });
-
-      if (response.status === 200) {
-        console.log('🎉 Upload completed successfully');
-        setUploadStatus({ message: 'Upload successful!', type: 'success' });
-        setUploadProgress(100);
-        
-        // Store uploaded file info for preview
-        setUploadedFile({
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          uploadDate: new Date(),
-          url: URL.createObjectURL(file)
-        });
-        
-        setTimeout(() => {
-          setUploadProgress(0);
-          setUploadStatus({ message: '', type: '' });
-        }, 3000);
-      } else {
-        throw new Error('Upload failed');
-      }
-    } catch (error) {
-      console.error('💥 Upload error:', error);
-      const errorMessage = error.message.includes('Network error') 
-        ? error.message 
-        : `Upload failed: ${error.message || 'Unknown error'}`;
-      setUploadStatus({ message: errorMessage, type: 'error' });
-      setUploadProgress(0);
-    } finally {
-      console.log('🧹 Cleaning up upload process...');
-      // Cleanup
-      clearTimeout(timeoutId);
-      controller.abort();
-      
-      // Reset states
-      setUploadProgress(0);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      
-      setIsUploading(false);
     }
   };
 
-  // Handle sending a message
-  const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
-
-    const userMessage = {
-      id: Date.now(),
-      text: inputValue,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-
-    console.log('📩 Sending question:', inputValue);
-    setMessages(prev => [...prev, userMessage]);
-    setInputValue('');
-    setIsLoading(true);
-
-    try {
-      console.log('🌐 Sending request to /api/v1/ask with question:', inputValue);
-      const startTime = Date.now();
-      
-      const response = await fetch('http://192.168.1.218:8000/api/v1/ask', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          question: inputValue,
-          debug: true
-        })
-      });
-
-      const endTime = Date.now();
-      console.log(`⏱️ Request took ${endTime - startTime}ms`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Server error response:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText
-        });
-        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log('📥 Received response:', data);
-      
-      const botMessage = {
-        id: Date.now() + 1,
-        text: data.answer,
-        sender: 'bot',
-        timestamp: new Date(),
-        // Include additional context if available
-        context: data.context || null,
-        sources: data.sources || [],
-      };
-
-      console.log('🤖 Bot response:', botMessage);
-      setMessages(prev => [...prev, botMessage]);
-    } catch (error) {
-      console.error('❌ Error sending message:', error);
-      
-      setMessages(prev => [
-        ...prev, 
-        {
-          id: Date.now() + 1,
-          text: 'Sorry, there was an error processing your request. Please try again.',
-          sender: 'bot',
-          timestamp: new Date(),
-          isError: true
-        }
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handle TTS speech generation with cache-busting
-  const handleSpeak = async (text, messageId) => {
-    console.log('handleSpeak called with messageId:', messageId, 'isSpeaking:', isSpeaking);
-    
-    try {
-      // If we're already speaking this message, just toggle play/pause
-      if (isSpeaking === messageId && currentAudio) {
-        console.log('Toggling play/pause for existing audio');
-        try {
-          if (currentAudio.paused) {
-            await currentAudio.play();
-          } else {
-            currentAudio.pause();
-          }
-          return;
-        } catch (error) {
-          console.error('Error toggling audio playback:', error);
-          // Continue with new audio generation if toggle fails
-        }
-      }
-
-      // If not already speaking this message, start new TTS
-      setIsSpeaking(messageId);
-      const audio = await prepareAudio(`tts-${Date.now()}`, text);
-      await audio.play();
-      setIsSpeaking(false);
-    } catch (error) {
-      console.error('Error in TTS playback:', error);
-      setIsSpeaking(false);
-      
-      // Fallback to Web Speech API if TTS fails
+  const handleSpeak = (text, messageId) => {
+    if ('speechSynthesis' in window) {
       const speech = new SpeechSynthesisUtterance(text);
-      speech.volume = 1;
-      speech.rate = 0.9;
-      speech.pitch = 1;
+      speech.onend = () => {
+        setIsSpeaking(false);
+        audioPlayer.current.isPlaying = false;
+      };
       
-      const voices = window.speechSynthesis.getVoices();
-      const femaleVoice = voices.find(voice => 
-        voice.name.toLowerCase().includes('female') || 
-        voice.lang.includes('en')
-      );
+      window.speechSynthesis.cancel();
       
-      if (femaleVoice) {
-        speech.voice = femaleVoice;
-      }
-      
-      speech.onend = () => setIsSpeaking(false);
+      setIsSpeaking(messageId);
+      audioPlayer.current.isPlaying = true;
       window.speechSynthesis.speak(speech);
     }
   };
 
-  // Stop current speech
-  const handleStopSpeech = () => {
-    if (!currentAudio) return;
-    
-    try {
-      // Stop the audio
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
-      
-      // Clean up
-      if (currentAudio.src) {
-        URL.revokeObjectURL(currentAudio.src);
-      }
-      
-    } catch (error) {
-      console.error('Error stopping speech:', error);
-    } finally {
+  const handleStopSpeech = useCallback(() => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
       setIsSpeaking(false);
-      setCurrentAudio(null);
+      audioPlayer.current.isPlaying = false;
+    }
+  }, []);
+
+  const handleStreamResponse = useCallback(async (question) => {
+    return new Promise((resolve, reject) => {
+      let responseText = '';
+      let audioFile = null;
+      let currentText = '';
+      let charIndex = 0;
+      let controller = new AbortController();
+
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      const requestBody = {
+        messages: [
+          {
+            role: 'user',
+            content: question
+          }
+        ],
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 1000,
+        top_k: 3
+      };
+
+      console.log('Sending request to:', 'http://192.168.1.218:8000/api/v1/chat/completions');
+
+      fetch('http://192.168.1.218:8000/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.text().then(text => {
+            throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+          });
+        }
+        
+        if (!response.body) {
+          throw new Error('ReadableStream not supported in this browser');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const processText = ({ done, value }) => {
+          if (done) {
+            finalizeResponse();
+            return;
+          }
+          const chunk = decoder.decode(value, { stream: true });
+          buffer += chunk;
+          
+          const lines = buffer.split('\n');
+          buffer = ''; 
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6); 
+              
+              if (!data.trim() || data.trim() === '[DONE]') {
+                finalizeResponse();
+                return;
+              }
+              
+              try {
+                const parsedData = JSON.parse(data);
+                
+                if (parsedData.type === 'content' && typeof parsedData.content === 'string') {
+                  if (parsedData.content.includes('<think>') || parsedData.content.includes('</think>')) {
+                    continue;
+                  }
+                  
+                  const content = parsedData.content;
+                  if (content === '') continue;
+                  
+                  responseText += content;
+                  
+                  setMessages(prevMessages => {
+                    const messages = [...prevMessages];
+                    const typingMessageIndex = messages.findIndex(msg => msg.id === 'typing');
+                    
+                    if (typingMessageIndex >= 0) {
+                      messages[typingMessageIndex] = {
+                        ...messages[typingMessageIndex],
+                        text: responseText
+                      };
+                    } else {
+                      messages.push({
+                        id: 'typing',
+                        text: responseText,
+                        sender: 'bot',
+                        timestamp: new Date().toISOString()
+                      });
+                    }
+                    
+                    return messages;
+                  });
+                  
+                  scrollToBottom();
+                }
+              } catch (e) {
+                console.error('Error parsing SSE data:', e, 'Data:', data);
+              }
+            } else if (line.trim() !== '') {
+              buffer += line + '\n';
+            }
+          }
+          
+          return reader.read().then(processText);
+        };
+
+        const updateStreamedText = () => {
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+          }
+
+          const typeText = () => {
+            if (charIndex < responseText.length) {
+              currentText = responseText.substring(0, charIndex + 1);
+              setStreamedText(currentText);
+              charIndex++;
+              typingTimeoutRef.current = setTimeout(typeText, 20);
+            }
+          };
+          
+          typeText();
+        };
+
+        const finalizeResponse = () => {
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+          }
+          
+          const botMessage = {
+            id: `bot-${Date.now()}`,
+            text: responseText,
+            sender: 'bot',
+            timestamp: new Date().toISOString(),
+            audioFile: null,
+          };
+
+          setMessages(prevMessages => [
+            ...prevMessages.filter(msg => msg.id !== 'typing'),
+            botMessage
+          ]);
+          
+          setStreamedText('');
+          setIsStreaming(false);
+          scrollToBottom();
+          resolve({ text: responseText, audioFile: null });
+        };
+
+        return reader.read().then(processText);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        setIsStreaming(false);
+        reject(error);
+      });
+      
+      eventSourceRef.current = { close: () => controller.abort() };
+    });
+  }, [scrollToBottom]);
+
+  const handleSendMessage = async (text) => {
+    if (!text.trim() || isLoading || isStreaming) return;
+
+    const userMessage = {
+      id: `user-${Date.now()}`,
+      text: text,
+      sender: 'user',
+      timestamp: new Date().toISOString(),
+    };
+
+    const typingMessage = {
+      id: 'typing',
+      text: '',
+      sender: 'bot',
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prevMessages => [...prevMessages, userMessage, typingMessage]);
+    setInputValue('');
+    setIsLoading(true);
+    setIsStreaming(true);
+    scrollToBottom();
+
+    try {
+      await handleStreamResponse(text);
+    } catch (error) {
+      console.error('Error in streaming response:', error);
+      setMessages(prevMessages => [
+        ...prevMessages.filter(msg => msg.id !== 'typing'),
+        {
+          id: `error-${Date.now()}`,
+          text: 'Sorry, there was an error generating the response. Please try again.',
+          sender: 'bot',
+          timestamp: new Date().toISOString(),
+        }
+      ]);
+    } finally {
+      setIsLoading(false);
+      setIsStreaming(false);
+      scrollToBottom();
     }
   };
+
+  const handlePlayAudio = useCallback(async (audioFile) => {
+    if (isSpeaking) {
+      try {
+        if (audioPlayer.current.currentAudio) {
+          if (audioPlayer.current.currentAudio.paused) {
+            await audioPlayer.current.currentAudio.play();
+          } else {
+            audioPlayer.current.currentAudio.pause();
+            audioPlayer.current.currentAudio.currentTime = 0;
+          }
+        }
+      } catch (error) {
+        console.error('Error controlling audio:', error);
+      }
+      return;
+    }
+
+    try {
+      setIsSpeaking(true);
+      audioPlayer.current.isPlaying = true;
+      
+      if (audioPlayer.current.currentAudio) {
+        audioPlayer.current.currentAudio.pause();
+        audioPlayer.current.currentAudio = null;
+      }
+      const audio = new Audio(audioFile);
+      audioPlayer.current.currentAudio = audio;
+      
+      audio.onended = () => {
+        setIsSpeaking(false);
+        audioPlayer.current.isPlaying = false;
+      };
+      
+      audio.onerror = (error) => {
+        console.error('Error playing audio:', error);
+        setIsSpeaking(false);
+        audioPlayer.current.isPlaying = false;
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      setIsSpeaking(false);
+      audioPlayer.current.isPlaying = false;
+    }
+  }, [isSpeaking]);
 
   useEffect(() => {
     return () => {
-      stopAudio();
-      window.speechSynthesis.cancel();
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      if (audioPlayer.current.currentAudio) {
+        audioPlayer.current.currentAudio.pause();
+        audioPlayer.current.currentAudio = null;
+      }
+      
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
     };
   }, []);
-
-  // Handle Enter key press
-  const handleKeyPress = (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSendMessage();
-    }
-  };
 
   return (
     <div className="h-screen bg-gray-100 flex flex-col">
@@ -370,102 +584,14 @@ function App() {
         {/* Header */}
         <div className="bg-primary text-white p-4">
           <h1 className="text-xl font-semibold">RAG Chatbot</h1>
-          <p className="text-white/80 text-sm">Upload a PDF and ask questions about it</p>
+          <p className="text-white/80 text-sm">Ask me anything!</p>
         </div>
-
-        {/* File Upload Section */}
-        <div className="p-4 border-b border-gray-200 bg-gray-50">
-          <div className="flex items-center gap-4">
-            <div className="mb-4">
-              <input
-                type="file"
-                onChange={handleFileUpload}
-                accept=".pdf"
-                className="hidden"
-                id="file-upload"
-                ref={fileInputRef}
-                disabled={isLoading || isUploading}
-              />
-              <label
-                htmlFor="file-upload"
-                className={`inline-flex items-center px-4 py-2 rounded cursor-pointer transition-colors ${
-                  isUploading || isLoading
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-primary hover:bg-opacity-90 text-white'
-                }`}
-              >
-                {isUploading ? (
-                  <>
-                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Uploading...
-                  </>
-                ) : 'Upload PDF'}
-              </label>
-              
-              {uploadStatus.message && (
-                <div className={`mt-2 p-2 rounded text-sm ${
-                  uploadStatus.type === 'error' ? 'bg-red-100 text-red-700' :
-                  uploadStatus.type === 'success' ? 'bg-green-100 text-green-700' :
-                  'bg-blue-100 text-blue-700'
-                }`}>
-                  {uploadStatus.message}
-                </div>
-              )}
-              
-              {isUploading && uploadProgress > 0 && (
-                <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                  <div 
-                    className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" 
-                    style={{ width: `${uploadProgress}%` }}
-                  ></div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* PDF Preview Section */}
-        {uploadedFile && (
-          <div className="p-3 bg-gray-50 border-b border-gray-200">
-            <div className="flex items-center space-x-3">
-              <div className="flex-shrink-0">
-                <div className="w-8 h-10 bg-red-100 border border-red-200 rounded flex items-center justify-center">
-                  <svg className="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                  </svg>
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-medium text-gray-900 truncate">
-                  {uploadedFile.name}
-                </h4>
-                <p className="text-xs text-gray-500">
-                  {(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for questions
-                </p>
-              </div>
-              <div className="flex-shrink-0">
-                <button
-                  onClick={() => setUploadedFile(null)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                  title="Remove file"
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center text-gray-500 mt-8">
-              <p>Upload a PDF file and start asking questions!</p>
+              <p>Start chatting with the AI assistant!</p>
             </div>
           )}
           
@@ -474,38 +600,65 @@ function App() {
               key={message.id}
               className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className="flex items-start space-x-2">
-                <div
-                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                    message.sender === 'user'
-                      ? 'bg-primary text-white rounded-br-none'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-none border border-gray-200'
-                  }`}
-                >
-                  <p className="text-sm">{message.text}</p>
-                  <p className={`text-xs mt-1 ${message.sender === 'user' ? 'text-white/80' : 'text-gray-500'}`}>
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
+              <div className={`chat-message ${message.sender}-message`}>
+                <div className="chat-message-content">
+                  <div className="message-content-wrapper">
+                    <div 
+                      className="message-text"
+                      dangerouslySetInnerHTML={{
+                        __html: typeof message.text === 'string' 
+                          ? formatMessageText(message.text)
+                          : ''
+                      }}
+                    />
+                    {isStreaming && message.id === 'typing' && (
+                      <div className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="message-meta">
+                    <span className={`timestamp ${message.sender === 'user' ? 'text-white/80' : 'text-gray-500'}`}>
+                      {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    
+                    {message.sender === 'bot' && message.audioFile && (
+                      <button
+                        onClick={() => handlePlayAudio(message.audioFile)}
+                        className="audio-control ml-2"
+                        disabled={isLoading}
+                        aria-label={isSpeaking && audioPlayer.current.isPlaying ? 'Pause audio' : 'Play audio'}
+                      >
+                        {isSpeaking && audioPlayer.current.isPlaying ? (
+                          <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
-                {/* TTS Button for bot messages */}
-                {message.sender === 'bot' && (
+                {message.sender === 'bot' && !message.audioFile && message.text && (
                   <button
-                    onClick={() => isSpeaking === message.id ? handleStopSpeech() : handleSpeak(message.text, message.id)}
-                    className={`p-2 rounded-full transition-colors ${
-                      isSpeaking === message.id 
-                        ? 'bg-red-100 text-red-600 hover:bg-red-200' 
-                        : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
-                    }`}
-                    title={isSpeaking === message.id ? 'Stop speaking' : 'Speak answer'}
+                    onClick={() => handleSpeak(message.text, message.id)}
+                    className="audio-control self-center"
+                    disabled={isLoading}
+                    aria-label={isSpeaking === message.id ? 'Stop speech' : 'Read aloud'}
                   >
                     {isSpeaking === message.id ? (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v6a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v6a1 1 0 11-2 0V7z" clipRule="evenodd" />
+                      <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                       </svg>
                     ) : (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.617.824L4.5 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.5l3.883-3.824zM15 8.75a.75.75 0 011.5 0v2.5a.75.75 0 01-1.5 0v-2.5zM17.25 5.5a.75.75 0 011.5 0v9a.75.75 0 01-1.5 0v-9z" clipRule="evenodd" />
+                      <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
                       </svg>
                     )}
                   </button>
@@ -516,17 +669,10 @@ function App() {
 
           {/* Loading indicator */}
           {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg rounded-bl-none max-w-xs border border-gray-200">
-                <div className="flex items-center space-x-2">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  </div>
-                  <span className="text-sm text-gray-600">Bot is thinking...</span>
-                </div>
-              </div>
+            <div className="loading-dots">
+              <div className="loading-dot"></div>
+              <div className="loading-dot"></div>
+              <div className="loading-dot"></div>
             </div>
           )}
           
@@ -536,25 +682,36 @@ function App() {
         {/* Input Section */}
         <div className="flex-shrink-0 p-4 border-t border-gray-200 bg-white">
           <div className="flex gap-2">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type your question here..."
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading}
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={isLoading || !inputValue.trim()}
-              className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg transition-colors flex items-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-              Send
-            </button>
+            <div className="flex-1 relative">
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Type your message..."
+                className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent resize-none"
+                rows="1"
+                style={{ minHeight: '44px', maxHeight: '120px' }}
+                disabled={isLoading || isStreaming}
+              />
+              <button
+                onClick={() => {
+                  if (inputValue.trim()) {
+                    handleSendMessage(inputValue);
+                    setInputValue('');
+                  }
+                }}
+                disabled={!inputValue.trim() || isLoading || isStreaming}
+                className={`absolute right-2 bottom-2 p-1 rounded-full ${
+                  !inputValue.trim() || isLoading || isStreaming
+                    ? 'text-gray-400 cursor-not-allowed'
+                    : 'text-primary hover:bg-gray-100'
+                }`}
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

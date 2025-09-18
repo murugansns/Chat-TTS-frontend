@@ -1,0 +1,522 @@
+/* Chat message styling */
+.chat-message {
+  max-width: 80%;
+  margin-bottom: 0.5rem;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+  white-space: pre-wrap;
+  word-spacing: 0.25em; /* Add space between words */
+}
+
+/* Ensure text is properly spaced and formatted */
+.message-text {
+  white-space: pre-wrap;
+  word-spacing: 0.25em;
+  letter-spacing: 0.02em;
+  line-height: 1.8;
+  text-rendering: optimizeLegibility;
+  font-size: 0.95rem;
+  text-align: left;
+  padding: 0.5rem 0;
+  
+  /* Ensure proper spacing between paragraphs */
+  & > p {
+    margin: 0.75rem 0;
+    line-height: 1.8;
+  }
+  
+  /* Style bullet points */
+  & > ul, & > ol {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+    padding: 0;
+  }
+  
+  & li {
+    margin: 0.5rem 0;
+    padding: 0;
+  }
+  
+  /* Ensure proper spacing after bullet points */
+  & > ul > li::before {
+    content: '•';
+    display: inline-block;
+    width: 1em;
+    margin-left: -1em;
+    color: inherit;
+  }
+  
+  /* Add some spacing between list items */
+  & > * + * {
+    margin-top: 0.5rem;
+  }
+}
+
+/* Add proper spacing for lists */
+.message-text ul, .message-text ol {
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.message-text li {
+  margin: 0.5rem 0;
+  position: relative;
+  padding-left: 1.5rem;
+  line-height: 1.6;
+}
+
+.message-text li:before {
+  content: '•';
+  position: absolute;
+  left: 0.5rem;
+  color: #3b82f6;
+  font-weight: bold;
+}
+
+/* Healthcare projects specific styling */
+.healthcare-project {
+  margin: 1.25rem 0;
+  padding-left: 1.25rem;
+  border-left: 3px solid #3b82f6;
+}
+
+/* Project list styling */
+.healthcare-project .project-list {
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.healthcare-project .project-item {
+  margin: 1rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  transition: background-color 0.2s ease;
+}
+
+.healthcare-project .project-item:hover {
+  background: #f1f5f9;
+}
+
+.healthcare-project .project-name {
+  font-weight: 600;
+  color: #1e40af;
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 1.05em;
+}
+
+.healthcare-project .project-desc {
+  color: #4b5563;
+  font-size: 0.95em;
+  line-height: 1.5;
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid #dbeafe;
+}
+
+/* Ensure proper spacing in text */
+.message-text {
+  white-space: pre-wrap;
+  word-spacing: 0.25em;
+  letter-spacing: 0.01em;
+  line-height: 1.8;
+}
+
+/* Fix for run-together words */
+.message-text span.word {
+  white-space: nowrap;
+  margin-right: 0.25em;
+}
+
+/* Better spacing for paragraphs */
+.message-text p {
+  margin: 0.75rem 0;
+  line-height: 1.7;
+  color: #1f2937;
+  text-align: left;
+}
+
+/* List styling */
+.message-list {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+  list-style-type: none;
+}
+
+.message-list .list-item {
+  position: relative;
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  line-height: 1.6;
+  color: #1f2937;
+}
+
+.message-list .list-item:before {
+  content: '•';
+  position: absolute;
+  left: 0.25rem;
+  color: #3b82f6;
+  font-weight: bold;
+}
+
+/* Numbered lists */
+.message-list[type='1'] {
+  list-style-type: decimal;
+  padding-left: 2rem;
+}
+
+.message-list[type='1'] .list-item:before {
+  display: none;
+}
+
+/* Better spacing for paragraphs */
+.message-text p {
+  margin: 0.75rem 0;
+  line-height: 1.7;
+  color: #1f2937;
+  text-align: left;
+  padding: 0;
+  position: relative;
+}
+
+/* Add some spacing between paragraphs */
+.message-text p + p {
+  margin-top: 1rem;
+}
+
+/* Ensure proper spacing for nested lists */
+.message-list .message-list {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1.5rem;
+}
+
+/* Section headers */
+.section-header {
+  font-size: 1.1em;
+  font-weight: 600;
+  color: #1e40af;
+  margin: 1.25rem 0 0.75rem 0;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* Section lists */
+.section-list {
+  margin: 0.5rem 0 1rem 1.5rem;
+  padding: 0;
+  list-style-type: none;
+}
+
+.section-list .list-item {
+  position: relative;
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  line-height: 1.6;
+  color: #1f2937;
+}
+
+.section-list .list-item:before {
+  content: '•';
+  position: absolute;
+  left: 0.25rem;
+  color: #3b82f6;
+  font-weight: bold;
+}
+
+/* Project items with descriptions */
+.section-list .list-item strong {
+  color: #1e40af;
+  font-weight: 600;
+}
+
+/* Add some spacing between sections */
+.section-header + .section-list {
+  margin-top: 0.25rem;
+}
+
+/* Ensure proper spacing after lists */
+.section-list + p,
+.section-list + .section-header {
+  margin-top: 1rem !important;
+}
+
+/* Text formatting and wrapping */
+.message-text {
+  padding: 0.5rem 0.75rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  line-height: 1.7;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  color: #1f2937;
+}
+
+/* Force word breaks for long unbroken strings */
+.message-text {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Ensure proper spacing between words */
+.message-text * {
+  word-spacing: normal;
+  letter-spacing: normal;
+}
+
+/* Fix for text nodes that might be getting minified */
+.message-text::after {
+  content: '';
+  display: inline;
+  word-spacing: 0.25em;
+}
+
+/* Ensure proper spacing in paragraphs */
+.message-text p {
+  margin: 0.75rem 0;
+  line-height: 1.7;
+}
+
+/* Fix for text nodes in React components */
+[class*="message-"] {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Numbered lists */
+.message-text ol {
+  list-style-type: none;
+  counter-reset: item;
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.message-text ol > li {
+  counter-increment: item;
+  margin: 0.5rem 0;
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.message-text ol > li:before {
+  content: counter(item) '.';
+  position: absolute;
+  left: 0;
+  color: #3b82f6;
+  font-weight: bold;
+}
+
+/* Ensure proper spacing between elements */
+.message-text > * + * {
+  margin-top: 0.75rem;
+}
+
+/* Typing indicator */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0;
+}
+
+.typing-indicator span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #9ca3af;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% { 
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  40% { 
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Message content wrapper */
+.message-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Ensure proper spacing after punctuation */
+.message-text {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Add space after punctuation */
+.message-text:after {
+  content: ' ';
+  display: inline;
+}
+
+/* Ensure proper spacing for inline elements */
+.message-text > * {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-message-content {
+  padding: 1.25rem 1.75rem;
+  border-radius: 1rem;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  position: relative;
+  text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  max-width: 90%;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  
+  /* Ensure proper spacing for newlines */
+  white-space: pre-wrap;
+  
+  /* Add some padding for better readability */
+  p {
+    margin: 0.75rem 0;
+  }
+  
+  /* Style for bullet points */
+  ul, ol {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+    padding: 0;
+    list-style-type: none;
+  }
+  
+  li {
+    margin: 0.5rem 0;
+    position: relative;
+    padding-left: 1.5rem;
+  }
+  
+  li:before {
+    content: '•';
+    position: absolute;
+    left: 0;
+    color: inherit;
+  }
+}
+
+/* Add some spacing between messages */
+.chat-message {
+  margin-bottom: 1rem;
+}
+
+/* Ensure proper spacing for user messages */
+.user-message .chat-message-content {
+  background-color: #3b82f6;
+  color: white;
+  border-bottom-right-radius: 0.5rem;
+  margin-left: auto;
+  max-width: 85%;
+}
+
+/* Ensure proper spacing for bot messages */
+.bot-message .chat-message-content {
+  background-color: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 0.5rem;
+  margin-right: auto;
+  max-width: 90%;
+}
+
+/* User message styling */
+.user-message .chat-message-content {
+  background-color: #3b82f6; /* primary blue */
+  color: white;
+  border-bottom-right-radius: 0.25rem;
+  margin-left: auto;
+}
+
+/* Bot message styling */
+.bot-message .chat-message-content {
+  background-color: #f3f4f6; /* gray-100 */
+  color: #1f2937; /* gray-800 */
+  border: 1px solid #e5e7eb; /* gray-200 */
+  border-bottom-left-radius: 0.25rem;
+  margin-right: auto;
+}
+
+/* Timestamp and controls */
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+/* Audio controls */
+.audio-control {
+  padding: 0.25rem;
+  border-radius: 9999px;
+  transition: background-color 150ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.audio-control:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.audio-control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Loading dots */
+.loading-dots {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  background-color: #f3f4f6;
+  border-radius: 1rem;
+  width: fit-content;
+}
+
+.loading-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  background-color: #9ca3af; /* gray-400 */
+  border-radius: 50%;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}

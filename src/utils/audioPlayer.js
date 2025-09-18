@@ -217,6 +217,10 @@ export const queueAudio = ({
 };
 
 const playAudio = async (text, onAudioStart, onAudioEnd, voiceName, preset) => {
+  // Create a unique ID for this audio instance
+  const audioId = `audio_${Date.now()}`;
+  console.log(`[Audio] Created audio instance with ID: ${audioId}`);
+  
   // Generate a unique ID for this playback
   const playbackId = `playback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
@@ -262,7 +266,7 @@ const playAudio = async (text, onAudioStart, onAudioEnd, voiceName, preset) => {
       
       // Make the API request to get the audio stream with extended timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout for TTS generation
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 300 second (5 minute) timeout for TTS generation
       
       let response;
       try {
@@ -284,7 +288,7 @@ const playAudio = async (text, onAudioStart, onAudioEnd, voiceName, preset) => {
       } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-          throw new Error('Request timed out after 120 seconds');
+          throw new Error('Request timed out after 300 seconds (5 minutes)');
         }
         throw error;
       } finally {
@@ -383,26 +387,146 @@ const playAudio = async (text, onAudioStart, onAudioEnd, voiceName, preset) => {
 };
 
 /**
- * Generate or retrieve audio for a message
- * @param {string} messageId - Unique ID for the message
- * @param {string} text - Text to convert to speech
+ * Play audio from a data URL
+ * @param {string} audioDataUrl - Data URL of the audio to play (e.g., data:audio/wav;base64,...)
  * @param {Function} [onAudioStart] - Callback when audio starts playing
  * @param {Function} [onAudioEnd] - Callback when audio finishes playing
- * @param {string} [voiceName='my_voice'] - Voice to use for TTS
- * @param {string} [preset='fast'] - TTS quality preset
- * @returns {Promise<{play: Function, stop: Function}>} Object with play/stop controls
+ * @returns {Promise<{stop: Function}>} Object with stop control
  */
+const playAudioFromDataUrl = async (audioDataUrl, onAudioStart, onAudioEnd) => {
+  // Log the audio data URL (trimmed for readability)
+  const logUrl = audioDataUrl ? 
+    (audioDataUrl.length > 100 ? 
+      `${audioDataUrl.substring(0, 50)}...${audioDataUrl.substring(audioDataUrl.length - 30)}` : 
+      audioDataUrl) : 
+    'undefined';
+  
+  console.log(`[Audio] Preparing to play audio from URL: ${logUrl}`);
+  
+  // Stop any currently playing audio
+  stopAudio(true);
+
+  if (!audioDataUrl) {
+    console.error('[Audio] No audio data URL provided');
+    if (onAudioEnd) onAudioEnd();
+    return { stop: () => {} };
+  }
+
+  try {
+    const audioElement = new Audio(audioDataUrl);
+    const id = `audio-${Date.now()}`;
+    
+    // Add to active audio elements
+    activeAudioElements.set(id, { 
+      source: audioElement,
+      startTime: new Date().toISOString(),
+      url: logUrl
+    });
+    
+    // Log all active audio elements for debugging
+    console.log(`[Audio] Active audio elements:`, Array.from(activeAudioElements.entries()).map(([id, data]) => ({
+      id,
+      playing: !data.source.paused,
+      duration: data.source.duration || 'unknown',
+      currentTime: data.source.currentTime || 0,
+      url: data.url || 'unknown',
+      startTime: data.startTime || 'unknown'
+    })));
+    
+    // Set up event handlers
+    const handleEnded = () => {
+      console.log(`[Audio] Playback ended for audio ID: ${id}`);
+      activeAudioElements.delete(id);
+      if (onAudioEnd) onAudioEnd();
+    };
+    
+    audioElement.onplay = () => {
+      console.log(`[Audio] Playback started for audio ID: ${id}`);
+      console.log(`[Audio] Audio element state:`, {
+        duration: audioElement.duration,
+        currentTime: audioElement.currentTime,
+        volume: audioElement.volume,
+        muted: audioElement.muted,
+        paused: audioElement.paused,
+        readyState: audioElement.readyState,
+        networkState: audioElement.networkState
+      });
+      if (onAudioStart) onAudioStart();
+    };
+    
+    audioElement.onended = handleEnded;
+    
+    audioElement.onerror = (error) => {
+      console.error(`[Audio] Error playing audio (ID: ${id}):`, error);
+      console.error(`[Audio] Error details:`, {
+        errorCode: audioElement.error ? audioElement.error.code : 'unknown',
+        errorMessage: audioElement.error ? audioElement.error.message : 'Unknown error',
+        readyState: audioElement.readyState,
+        networkState: audioElement.networkState
+      });
+      activeAudioElements.delete(id);
+      if (onAudioEnd) onAudioEnd();
+    };
+    
+    // Attempt to play the audio
+    console.log(`[Audio] Starting playback for audio ID: ${id}`);
+    try {
+      await audioElement.play();
+      console.log(`[Audio] Playback started successfully for audio ID: ${id}`);
+    } catch (playError) {
+      console.error(`[Audio] Failed to start playback for audio ID: ${id}:`, playError);
+      throw playError;
+    }
+    
+    return {
+      stop: () => {
+        console.log(`[Audio] Stopping playback for audio ID: ${id}`);
+        audioElement.pause();
+        audioElement.currentTime = 0;
+        audioElement.removeEventListener('ended', handleEnded);
+        activeAudioElements.delete(id);
+      }
+    };
+  } catch (error) {
+    console.error('[Audio] Error initializing audio playback:', error);
+    if (onAudioEnd) onAudioEnd();
+    throw error;
+  }
+};
 /**
  * Prepare audio for playback with queue management
- * @param {string} messageId - Unique ID for the message
- * @param {string} text - Text to convert to speech
+ * @param {string|Object} messageIdOrAudioData - Either a message ID (string) or audio data URL (object with audio and mimetype)
+ * @param {string} [text] - Text to convert to speech (if not providing audio data)
  * @param {Function} [onAudioStart] - Callback when audio starts playing
  * @param {Function} [onAudioEnd] - Callback when audio finishes playing
  * @param {string} [voiceName='my_voice'] - Voice to use for TTS
  * @param {string} [preset='fast'] - TTS quality preset
  * @returns {Object} Object with playback controls
  */
-export const prepareAudio = (messageId, text, onAudioStart, onAudioEnd, voiceName = 'my_voice', preset = 'fast') => {
+export const prepareAudio = (messageIdOrAudioData, text, onAudioStart, onAudioEnd, voiceName = 'my_voice', preset = 'fast') => {
+  // Handle case where first argument is an audio data URL object
+  if (messageIdOrAudioData && typeof messageIdOrAudioData === 'object' && messageIdOrAudioData.audio) {
+    const { audio, mimetype } = messageIdOrAudioData;
+    const audioDataUrl = `data:${mimetype || 'audio/wav'};base64,${audio}`;
+    
+    return {
+      stop: stopAudio,
+      play: () => playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd),
+      queue: () => {
+        // For simplicity, just play immediately when queued
+        return playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd);
+      },
+      getState: () => ({
+        isPlaying: activeAudioElements.size > 0,
+        currentPlaybackId: null,
+        queueLength: 0,
+        activeAudioCount: activeAudioElements.size
+      })
+    };
+  }
+  
+  // Original behavior for text-to-speech
+  const messageId = messageIdOrAudioData;
   // Check if audio is already in cache
   if (audioCache.has(messageId)) {
     const audioBlob = audioCache.get(messageId);
@@ -480,13 +604,55 @@ export const prepareAudio = (messageId, text, onAudioStart, onAudioEnd, voiceNam
     const audioBlob = audioCache.get(messageId);
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
+    const audioId = `cached-audio-${Date.now()}`;
+    
+    // Add to active audio elements
+    activeAudioElements.set(audioId, {
+      source: audio,
+      url: audioUrl,
+      startTime: new Date().toISOString()
+    });
     
     audio.onplay = () => {
+      console.log(`[Audio] Playback started for audio ID: ${audioId}`);
+      console.log(`[Audio] Audio element state:`, {
+        duration: audio.duration,
+        currentTime: audio.currentTime,
+        volume: audio.volume,
+        muted: audio.muted,
+        paused: audio.paused,
+        readyState: audio.readyState,
+        networkState: audio.networkState
+      });
       isPlaying = true;
       if (onAudioStart) onAudioStart();
     };
     
-    audio.onended = () => {
+    const handleEnded = () => {
+      console.log(`[Audio] Playback finished for audio ID: ${audioId}`);
+      audio.pause();
+      audio.currentTime = 0;
+      audio.removeEventListener('ended', handleEnded);
+      activeAudioElements.delete(audioId);
+      isPlaying = false;
+      URL.revokeObjectURL(audioUrl);
+      if (onAudioEnd) onAudioEnd();
+    };
+    
+    audio.onended = handleEnded;
+    
+    audio.onerror = (error) => {
+      console.error(`[Audio] Error playing audio (ID: ${audioId}):`, error);
+      console.error(`[Audio] Error details:`, {
+        errorCode: audio.error ? audio.error.code : 'unknown',
+        errorMessage: audio.error ? audio.error.message : 'Unknown error',
+        readyState: audio.readyState,
+        networkState: audio.networkState
+      });
+      audio.pause();
+      audio.currentTime = 0;
+      audio.removeEventListener('ended', handleEnded);
+      activeAudioElements.delete(audioId);
       isPlaying = false;
       URL.revokeObjectURL(audioUrl);
       if (onAudioEnd) onAudioEnd();
