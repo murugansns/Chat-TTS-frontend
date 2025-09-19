@@ -299,177 +299,91 @@ function App() {
   }, []);
 
   const handleStreamResponse = useCallback(async (question) => {
-    return new Promise((resolve, reject) => {
-      let responseText = '';
-      let audioFile = null;
-      let currentText = '';
-      let charIndex = 0;
-      let controller = new AbortController();
-
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-
+    return new Promise(async (resolve, reject) => {
       const requestBody = {
-        messages: [
-          {
-            role: 'user',
-            content: question
-          }
-        ],
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 1000,
-        top_k: 3
+        question: question,
+        top_k: 5,
+        similarity_threshold: 0.3
       };
 
-      console.log('Sending request to:', 'http://192.168.1.218:8000/api/v1/chat/completions');
+      let fullResponse = '';
+      let messageId = Date.now();
 
-      fetch('http://192.168.1.218:8000/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      })
-      .then(response => {
-        if (!response.ok) {
-          return response.text().then(text => {
-            throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-          });
-        }
-        
+      try {
+        const response = await fetch('http://192.168.1.218:8000/api/v1/ask/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
         if (!response.body) {
-          throw new Error('ReadableStream not supported in this browser');
+          throw new Error('No response body');
         }
 
         const reader = response.body.getReader();
-        const decoder = new TextDecoder();
         let buffer = '';
+        setMessages(prevMessages => {
+          const messages = prevMessages.filter(msg => msg.id !== 'typing');
+          return [
+            ...messages,
+            {
+              id: messageId,
+              text: '',
+              sender: 'bot',
+              timestamp: new Date().toISOString()
+            }
+          ];
+        });
 
-        const processText = ({ done, value }) => {
-          if (done) {
-            finalizeResponse();
-            return;
-          }
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk;
-          
-          const lines = buffer.split('\n');
-          buffer = ''; 
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.substring(6); 
-              
-              if (!data.trim() || data.trim() === '[DONE]') {
-                finalizeResponse();
-                return;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += new TextDecoder().decode(value);
+
+          let eventMatch;
+          const eventRegex = /data: (.*)\n\n/g;
+          while ((eventMatch = eventRegex.exec(buffer)) !== null) {
+            try {
+              const data = JSON.parse(eventMatch[1]);
+              switch (data.type) {
+                case 'start':
+                  // Already handled above
+                  break;
+                case 'token':
+                  fullResponse += data.content;
+                  setMessages(prevMessages => prevMessages.map(msg =>
+                    msg.id === messageId
+                      ? { ...msg, text: (msg.text || '') + data.content }
+                      : msg
+                  ));
+                  break;
+                case 'end':
+                  resolve(fullResponse);
+                  return;
+                case 'error':
+                  reject(new Error(data.content));
+                  return;
+                default:
+                  break;
               }
-              
-              try {
-                const parsedData = JSON.parse(data);
-                
-                if (parsedData.type === 'content' && typeof parsedData.content === 'string') {
-                  if (parsedData.content.includes('<think>') || parsedData.content.includes('</think>')) {
-                    continue;
-                  }
-                  
-                  const content = parsedData.content;
-                  if (content === '') continue;
-                  
-                  responseText += content;
-                  
-                  setMessages(prevMessages => {
-                    const messages = [...prevMessages];
-                    const typingMessageIndex = messages.findIndex(msg => msg.id === 'typing');
-                    
-                    if (typingMessageIndex >= 0) {
-                      messages[typingMessageIndex] = {
-                        ...messages[typingMessageIndex],
-                        text: responseText
-                      };
-                    } else {
-                      messages.push({
-                        id: 'typing',
-                        text: responseText,
-                        sender: 'bot',
-                        timestamp: new Date().toISOString()
-                      });
-                    }
-                    
-                    return messages;
-                  });
-                  
-                  scrollToBottom();
-                }
-              } catch (e) {
-                console.error('Error parsing SSE data:', e, 'Data:', data);
-              }
-            } else if (line.trim() !== '') {
-              buffer += line + '\n';
+            } catch (e) {
+              console.error('Error parsing SSE event:', e);
             }
           }
-          
-          return reader.read().then(processText);
-        };
-
-        const updateStreamedText = () => {
-          if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-          }
-
-          const typeText = () => {
-            if (charIndex < responseText.length) {
-              currentText = responseText.substring(0, charIndex + 1);
-              setStreamedText(currentText);
-              charIndex++;
-              typingTimeoutRef.current = setTimeout(typeText, 20);
-            }
-          };
-          
-          typeText();
-        };
-
-        const finalizeResponse = () => {
-          if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-          }
-          
-          const botMessage = {
-            id: `bot-${Date.now()}`,
-            text: responseText,
-            sender: 'bot',
-            timestamp: new Date().toISOString(),
-            audioFile: null,
-          };
-
-          setMessages(prevMessages => [
-            ...prevMessages.filter(msg => msg.id !== 'typing'),
-            botMessage
-          ]);
-          
-          setStreamedText('');
-          setIsStreaming(false);
-          scrollToBottom();
-          resolve({ text: responseText, audioFile: null });
-        };
-
-        return reader.read().then(processText);
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        setIsStreaming(false);
+          // Remove processed events from buffer
+          buffer = buffer.slice(eventRegex.lastIndex);
+          eventRegex.lastIndex = 0;
+        }
+        resolve(fullResponse);
+      } catch (error) {
+        console.error('Streaming fetch error:', error);
         reject(error);
-      });
-      
-      eventSourceRef.current = { close: () => controller.abort() };
+      }
     });
-  }, [scrollToBottom]);
+  }, []);
 
   const handleSendMessage = async (text) => {
     if (!text.trim() || isLoading || isStreaming) return;
@@ -566,6 +480,7 @@ function App() {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+      
       
       if (audioPlayer.current.currentAudio) {
         audioPlayer.current.currentAudio.pause();
