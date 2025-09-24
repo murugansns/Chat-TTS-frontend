@@ -340,9 +340,29 @@
                   updateMessage(fullResponse); // RAW text, not formatted
                   break;
 
-                case "end":
-                  // ✅ Final formatted text only once
-                  fullResponse = DOMPurify.sanitize(fullResponse);
+                case "audio_complete":
+                  // ✅ Handle audio completion with custom voice file
+                  fullResponse = data.text;
+                  updateMessage(fullResponse, true);
+
+                  // Store the audio file path in the message and reset speaking state
+                  setMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === messageId
+                        ? { ...msg, text: fullResponse, isStreaming: false, audioFile: data.audio_file }
+                        : msg
+                    )
+                  );
+
+                  // Reset speaking state to allow playing the new audio
+                  setIsSpeaking(false);
+                  audioPlayer.current.isPlaying = false;
+
+                  return resolve(fullResponse);
+
+                case "complete":
+                  // ✅ Handle completion without audio
+                  fullResponse = data.text;
                   updateMessage(fullResponse, true);
                   return resolve(fullResponse);
 
@@ -429,52 +449,80 @@
       }
     };
 
-    const handlePlayAudio = useCallback(async (audioFile) => {
+    const handlePlayAudio = useCallback(async (audioFile, messageText = '') => {
+      // If already speaking, stop the current audio
       if (isSpeaking) {
         try {
           if (audioPlayer.current.currentAudio) {
-            if (audioPlayer.current.currentAudio.paused) {
-              await audioPlayer.current.currentAudio.play();
-            } else {
-              audioPlayer.current.currentAudio.pause();
-              audioPlayer.current.currentAudio.currentTime = 0;
-            }
+            audioPlayer.current.currentAudio.pause();
+            audioPlayer.current.currentAudio.currentTime = 0;
           }
+          setIsSpeaking(false);
+          audioPlayer.current.isPlaying = false;
+          return;
         } catch (error) {
           console.error('Error controlling audio:', error);
+          setIsSpeaking(false);
+          audioPlayer.current.isPlaying = false;
+          return;
         }
-        return;
       }
 
+      // If not speaking, start playing the audio
       try {
         setIsSpeaking(true);
         audioPlayer.current.isPlaying = true;
-        
+
+        // Stop any existing audio
         if (audioPlayer.current.currentAudio) {
           audioPlayer.current.currentAudio.pause();
           audioPlayer.current.currentAudio = null;
         }
-        const audio = new Audio(audioFile);
-        audioPlayer.current.currentAudio = audio;
-        
-        audio.onended = () => {
-          setIsSpeaking(false);
-          audioPlayer.current.isPlaying = false;
-        };
-        
-        audio.onerror = (error) => {
-          console.error('Error playing audio:', error);
-          setIsSpeaking(false);
-          audioPlayer.current.isPlaying = false;
-        };
 
-        await audio.play();
+        // Play custom voice audio file if available
+        if (audioFile) {
+          const audio = new Audio(audioFile);
+          audioPlayer.current.currentAudio = audio;
+
+          audio.onended = () => {
+            setIsSpeaking(false);
+            audioPlayer.current.isPlaying = false;
+          };
+
+          audio.onerror = (error) => {
+            console.error('❌ Error playing custom audio:', error);
+            setIsSpeaking(false);
+            audioPlayer.current.isPlaying = false;
+            // Fallback to browser TTS with the actual message text
+            if (messageText) {
+              handleSpeak(messageText, 'fallback');
+            } else {
+              console.error('No message text available for fallback TTS');
+            }
+          };
+
+          await audio.play();
+        } else {
+          // Fallback to browser TTS if no custom audio file
+          if (messageText) {
+            handleSpeak(messageText, 'no-audio');
+          } else {
+            console.error('No message text available for TTS');
+          }
+          setIsSpeaking(false);
+          audioPlayer.current.isPlaying = false;
+        }
       } catch (error) {
-        console.error('Error playing audio:', error);
+        console.error('❌ Error playing audio:', error);
         setIsSpeaking(false);
         audioPlayer.current.isPlaying = false;
+        // Try browser TTS as final fallback
+        if (messageText) {
+          console.log('🔄 Final fallback to browser TTS');
+          handleSpeak(messageText, 'error-fallback');
+        }
       }
-    }, [isSpeaking]);
+    }, [isSpeaking, handleSpeak]);
 
     useEffect(() => {
       return () => {
@@ -543,7 +591,7 @@
                       
                       {message.sender === 'bot' && message.audioFile && (
                         <button
-                          onClick={() => handlePlayAudio(message.audioFile)}
+                          onClick={() => handlePlayAudio(message.audioFile, message.text)}
                           className="audio-control ml-2"
                           disabled={isLoading}
                           aria-label={isSpeaking && audioPlayer.current.isPlaying ? 'Pause audio' : 'Play audio'}

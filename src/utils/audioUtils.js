@@ -10,7 +10,7 @@ let currentAudio = null;
  * @param {string} [preset='fast'] - TTS quality preset
  * @returns {Promise<void>}
  */
-export const playAudio = async (messageId, text, voiceName = 'my_voice', preset = 'fast') => {
+export const playAudio = async (messageId, text, voiceName = 'sns', preset = 'fast') => {
     // Stop any currently playing audio
     if (currentAudio) {
         currentAudio.pause();

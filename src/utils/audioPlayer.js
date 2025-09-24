@@ -194,7 +194,7 @@ export const queueAudio = ({
   text,
   onAudioStart = () => {},
   onAudioEnd = () => {},
-  voiceName = 'my_voice',
+  voiceName = 'sns',
   preset = 'fast'
 }) => {
   return new Promise((resolve, reject) => {
@@ -503,7 +503,7 @@ const playAudioFromDataUrl = async (audioDataUrl, onAudioStart, onAudioEnd) => {
  * @param {string} [preset='fast'] - TTS quality preset
  * @returns {Object} Object with playback controls
  */
-export const prepareAudio = (messageIdOrAudioData, text, onAudioStart, onAudioEnd, voiceName = 'my_voice', preset = 'fast') => {
+export const prepareAudio = (messageIdOrAudioData, text, onAudioStart, onAudioEnd, voiceName = 'sns', preset = 'fast') => {
   // Handle case where first argument is an audio data URL object
   if (messageIdOrAudioData && typeof messageIdOrAudioData === 'object' && messageIdOrAudioData.audio) {
     const { audio, mimetype } = messageIdOrAudioData;
