@@ -341,15 +341,26 @@
                   break;
 
                 case "audio_complete":
-                  // ✅ Handle audio completion with custom voice file
+                  // Handle audio completion with custom voice file
                   fullResponse = data.text;
                   updateMessage(fullResponse, true);
 
-                  // Store the audio file path in the message and reset speaking state
+                  // Construct the full URL for the audio file
+                  const baseUrl = 'http://192.168.1.218:8000';
+                  const audioUrl = data.audio_file.startsWith('http') 
+                    ? data.audio_file 
+                    : `${baseUrl}${data.audio_file.startsWith('/') ? '' : '/'}${data.audio_file}`;
+
+                  // Store the audio file URL in the message and reset speaking state
                   setMessages(prev =>
                     prev.map(msg =>
                       msg.id === messageId
-                        ? { ...msg, text: fullResponse, isStreaming: false, audioFile: data.audio_file }
+                        ? { 
+                            ...msg, 
+                            text: fullResponse, 
+                            isStreaming: false, 
+                            audioFile: audioUrl 
+                          }
                         : msg
                     )
                   );
