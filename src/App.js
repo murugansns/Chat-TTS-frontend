@@ -295,6 +295,45 @@
       }
     }, []);
 
+    const cleanResponseText = (text) => {
+      if (!text) return '';
+      
+      // First, try to extract text from complete JSON messages
+      const completeMatch = text.match(/\{\s*"type"\s*:\s*"complete"\s*,\s*"text"\s*:\s*"([\s\S]*?)"\s*\}/);
+      if (completeMatch && completeMatch[1]) {
+        return completeMatch[1];
+      }
+      
+      // If not a complete message, clean up any JSON artifacts
+      let cleaned = text
+        // Remove complete JSON objects first
+        .replace(/\{\s*"type"\s*:\s*"complete"\s*,\s*"text"\s*:\s*"[\s\S]*?"\s*\}/g, '')
+        // Remove any data: { ... } patterns
+        .replace(/data:\s*\{[\s\S]*?\}/g, '')
+        // Remove any remaining JSON-like content
+        .replace(/\{[\s\S]*?\}/g, '')
+        .replace(/\[[\s\S]*?\]/g, '')
+        // Clean up quotes and escape characters
+        .replace(/["']/g, '')
+        .replace(/\\n/g, '\n')
+        .replace(/\\"/g, '"')
+        .replace(/\\/g, '')
+        // Clean up whitespace
+        .replace(/\s+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      
+      // If we're left with just whitespace or empty, try to get the text between quotes
+      if (!cleaned.trim()) {
+        const quotedMatch = text.match(/"text"\s*:\s*"([\s\S]*?)"/);
+        if (quotedMatch && quotedMatch[1]) {
+          cleaned = quotedMatch[1];
+        }
+      }
+      
+      return cleaned;
+    };
+
     const handleStreamResponse = async (response, messageId) => {
       if (!response.body) throw new Error("No response body");
 
@@ -309,10 +348,12 @@
         if (!force && now - lastUpdateTime < UPDATE_THROTTLE_MS) return;
         lastUpdateTime = now;
 
+        const cleanText = cleanResponseText(newText);
+        
         setMessages(prev =>
           prev.map(msg =>
             msg.id === messageId
-              ? { ...msg, text: newText, isStreaming: !force }
+              ? { ...msg, text: cleanText, isStreaming: !force }
               : msg
           )
         );
@@ -328,28 +369,71 @@
             const lines = chunk.split("\n");
 
             for (const line of lines) {
-              if (!line.startsWith("data:")) continue;
-              const data = JSON.parse(line.slice(5));
+              if (!line.trim()) continue;
+              
+              let data;
+              try {
+                if (line.startsWith("data:")) {
+                  data = JSON.parse(line.slice(5).trim());
+                } else {
+                  // If it's not a proper data line, skip it
+                  continue;
+                }
+              } catch (e) {
+                console.warn('Failed to parse line as JSON:', line);
+                continue;
+              }
 
               switch (data.type) {
                 case "start":
                   break;
 
                 case "token":
-                  fullResponse += data.content;
-                  updateMessage(fullResponse); // RAW text, not formatted
+                  if (data.content) {
+                    let content = data.content;
+                    
+                    // Skip processing if this is just metadata
+                    const trimmedContent = content.trim();
+                    if (trimmedContent === '{"type":"complete"}' || 
+                        trimmedContent.startsWith('data: {')) {
+                      continue;
+                    }
+                    
+                    // Clean the content
+                    content = cleanResponseText(content);
+                    
+                    if (content && content.trim()) {
+                      // Only add space if the last character isn't a newline
+                      if (fullResponse.length > 0 && 
+                          !fullResponse.endsWith('\n') && 
+                          !content.startsWith('\n') &&
+                          !content.startsWith('-') &&  // Don't add space before bullet points
+                          !fullResponse.endsWith(':')) {  // Don't add space after colons
+                        fullResponse += ' ';
+                      }
+                      fullResponse += content;
+                      updateMessage(fullResponse);
+                    }
+                  }
                   break;
 
                 case "audio_complete":
                   // Handle audio completion with custom voice file
-                  fullResponse = data.text;
+                  // Make sure we're using the text from data, not the raw response
+                  fullResponse = typeof data.text === 'string' ? data.text : 
+                               (data.text && typeof data.text.text === 'string' ? data.text.text : 
+                               (data.text && typeof data.text.content === 'string' ? data.text.content : fullResponse));
+                  
                   updateMessage(fullResponse, true);
 
                   // Construct the full URL for the audio file
                   const baseUrl = 'http://192.168.1.218:8000';
-                  const audioUrl = data.audio_file.startsWith('http') 
-                    ? data.audio_file 
-                    : `${baseUrl}${data.audio_file.startsWith('/') ? '' : '/'}${data.audio_file}`;
+                  const audioFile = data.audio_file || (data.text && data.text.audio_file);
+                  const audioUrl = audioFile && (
+                    audioFile.startsWith('http') 
+                      ? audioFile 
+                      : `${baseUrl}${audioFile.startsWith('/') ? '' : '/'}${audioFile}`
+                  );
 
                   // Store the audio file URL in the message and reset speaking state
                   setMessages(prev =>
@@ -372,10 +456,51 @@
                   return resolve(fullResponse);
 
                 case "complete":
-                  // ✅ Handle completion without audio
-                  fullResponse = data.text;
-                  updateMessage(fullResponse, true);
-                  return resolve(fullResponse);
+                  // If we already have content from token events, ignore the complete event text
+                  // to prevent duplicate content
+                  if (fullResponse.trim().length > 0) {
+                    // Just finalize the message with what we have
+                    updateMessage(fullResponse, true);
+                    return resolve(fullResponse);
+                  }
+                  
+                  // Fallback: If no content from tokens, use the complete event text
+                  if (data.text) {
+                    let cleanText = data.text;
+                    
+                    // If the text is JSON, parse it
+                    if (typeof cleanText === 'string' && (cleanText.trim().startsWith('{') || cleanText.includes('"type":'))) {
+                      try {
+                        // Try to extract JSON from the text
+                        const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                          const jsonData = JSON.parse(jsonMatch[0]);
+                          if (jsonData.text) {
+                            cleanText = jsonData.text;
+                          }
+                        }
+                      } catch (e) {
+                        console.warn('Failed to parse complete event JSON:', e);
+                      }
+                    }
+                    
+                    // Clean up the text
+                    cleanText = cleanText
+                      .replace(/^[\s\S]*?("text"\s*:\s*"|"type"\s*:\s*"complete")[\s\S]*?"([^"]+)"[\s\S]*$/, '$2')
+                      .replace(/\\n/g, '\n')
+                      .replace(/\\"/g, '"')
+                      .replace(/\\/g, '')
+                      .replace(/\s+\n/g, '\n')
+                      .replace(/\n{3,}/g, '\n\n')
+                      .trim();
+                    
+                    if (cleanText) {
+                      fullResponse = cleanText;
+                      updateMessage(fullResponse, true);
+                      return resolve(fullResponse);
+                    }
+                  }
+                  return resolve('');
 
                 case "error":
                   console.error("Stream error:", data.message);
