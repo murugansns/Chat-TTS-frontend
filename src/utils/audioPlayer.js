@@ -8,6 +8,16 @@ let currentPlaybackId = null;
 const audioCache = new Map(); // Cache for audio blobs by message ID
 const activeAudioElements = new Map(); // Track all active audio elements
 
+// Audio streaming state
+let audioChunks = new Map(); // Map of streamId to array of chunks
+let mediaSource = null;
+let sourceBuffer = null;
+let audioStream = null;
+let currentStreamId = null;
+let eventSource = null;
+let chunkBuffers = new Map(); // Buffer for out-of-order chunks
+let activeStreams = new Map(); // Track active streams
+
 // Initialize IndexedDB for audio caching
 const DB_NAME = 'audioCacheDB';
 const STORE_NAME = 'audioCache';
@@ -90,8 +100,18 @@ export const stopAudio = (skipOnEnd = false) => {
     }
   });
   
-  // Clear all active audio elements
+  // Stop all active streams
+  activeStreams.forEach(({ stop }) => {
+    try {
+      stop();
+    } catch (e) {
+      console.warn('Error stopping audio stream:', e);
+    }
+  });
+  
+  // Clear all active audio elements and streams
   activeAudioElements.clear();
+  activeStreams.clear();
   
   // Clear the queue
   audioQueue = [];
@@ -99,6 +119,7 @@ export const stopAudio = (skipOnEnd = false) => {
   // Reset state
   isPlaying = false;
   currentPlaybackId = null;
+  currentStreamId = null;
   
   // Clean up the audio context
   if (currentAudioContext) {
@@ -387,13 +408,190 @@ const playAudio = async (text, onAudioStart, onAudioEnd, voiceName, preset) => {
 };
 
 /**
+ * Stream audio chunks as they arrive
+ * @param {string} streamId - The stream ID to connect to
+ * @param {Function} [onAudioStart] - Callback when audio starts playing
+ * @param {Function} [onAudioEnd] - Callback when audio finishes playing
+ * @returns {Object} Object with stop control
+ */
+const streamAudio = async (streamId, onAudioStart, onAudioEnd) => {
+  // Clean up any existing stream with the same ID
+  if (activeStreams.has(streamId)) {
+    activeStreams.get(streamId).stop();
+  }
+  
+  // Initialize chunk buffer for this stream
+  audioChunks.set(streamId, []);
+  chunkBuffers.set(streamId, new Map());
+  currentStreamId = streamId;
+  
+  // Create audio context if it doesn't exist
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!currentAudioContext) {
+    currentAudioContext = new AudioContext();
+  }
+  
+  // Create media source
+  mediaSource = new MediaSource();
+  const audioElement = new Audio();
+  audioElement.src = URL.createObjectURL(mediaSource);
+  
+  // Set up media source
+  mediaSource.addEventListener('sourceopen', () => {
+    try {
+      sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      sourceBuffer.mode = 'sequence';
+      
+      sourceBuffer.addEventListener('updateend', () => {
+        // When the source buffer is ready for more data
+        if (isPlaying) {
+          playNextChunk();
+        }
+      });
+      
+      // Start playing when we have enough data
+      audioElement.play().then(() => {
+        isPlaying = true;
+        if (onAudioStart) onAudioStart();
+      }).catch(e => console.error('Playback failed:', e));
+    } catch (e) {
+      console.error('Error setting up media source:', e);
+      if (onAudioEnd) onAudioEnd();
+    }
+  });
+  
+  // Handle audio element events
+  audioElement.onended = () => {
+    isPlaying = false;
+    if (onAudioEnd) onAudioEnd();
+    cleanupStream(streamId);
+  };
+  
+  // Function to play the next chunk
+  const playNextChunk = () => {
+    if (!isPlaying || !sourceBuffer || sourceBuffer.updating) return;
+    
+    const chunks = audioChunks.get(streamId) || [];
+    const buffer = chunkBuffers.get(streamId);
+    
+    // Find the next chunk to play
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (buffer.has(chunk.index)) {
+        const chunkData = buffer.get(chunk.index);
+        try {
+          sourceBuffer.appendBuffer(chunkData);
+          // Remove this chunk from buffer
+          buffer.delete(chunk.index);
+          return;
+        } catch (e) {
+          console.error('Error appending buffer:', e);
+        }
+      }
+    }
+  };
+  
+  // Clean up resources
+  const cleanupStream = (id) => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.src = '';
+    }
+    
+    if (mediaSource && mediaSource.readyState === 'open') {
+      try {
+        mediaSource.endOfStream();
+      } catch (e) {
+        console.error('Error ending media source:', e);
+      }
+    }
+    
+    audioChunks.delete(id);
+    chunkBuffers.delete(id);
+    activeStreams.delete(id);
+    currentStreamId = null;
+  };
+  
+  // Set up SSE connection
+  eventSource = new EventSource(`/api/stream-audio/${streamId}`);
+  
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      
+      if (data.type === 'chunk') {
+        const { index, data: chunkData } = data;
+        const buffer = chunkBuffers.get(streamId);
+        
+        // Convert hex string to Uint8Array
+        const bytes = new Uint8Array(chunkData.match(/[\da-f]{2}/gi).map(h => parseInt(h, 16)));
+        
+        // Store the chunk
+        buffer.set(index, bytes);
+        
+        // Add to chunks list if not already present
+        const chunks = audioChunks.get(streamId);
+        if (!chunks.some(c => c.index === index)) {
+          chunks.push({ index, timestamp: Date.now() });
+          chunks.sort((a, b) => a.index - b.index);
+        }
+        
+        // Try to play the next chunk
+        if (isPlaying) {
+          playNextChunk();
+        }
+      } else if (data.type === 'complete') {
+        // All chunks received
+        if (onAudioEnd) onAudioEnd();
+        cleanupStream(streamId);
+      }
+    } catch (e) {
+      console.error('Error processing chunk:', e);
+    }
+  };
+  
+  eventSource.onerror = (error) => {
+    console.error('SSE Error:', error);
+    cleanupStream(streamId);
+    if (onAudioEnd) onAudioEnd();
+  };
+  
+  // Create control object
+  const control = {
+    stop: () => {
+      cleanupStream(streamId);
+      if (onAudioEnd) onAudioEnd();
+    }
+  };
+  
+  // Store the control object
+  activeStreams.set(streamId, control);
+  
+  return control;
+};
+
+/**
  * Play audio from a data URL
  * @param {string} audioDataUrl - Data URL of the audio to play (e.g., data:audio/wav;base64,...)
  * @param {Function} [onAudioStart] - Callback when audio starts playing
  * @param {Function} [onAudioEnd] - Callback when audio finishes playing
+ * @param {Object} [options] - Additional options
+ * @param {boolean} [options.isStreaming] - Whether the URL is a streaming endpoint
+ * @param {string} [options.streamId] - Stream ID for chunked audio
  * @returns {Promise<{stop: Function}>} Object with stop control
  */
-const playAudioFromDataUrl = async (audioDataUrl, onAudioStart, onAudioEnd) => {
+const playAudioFromDataUrl = async (audioDataUrl, onAudioStart, onAudioEnd, options = {}) => {
+  const { isStreaming = false, streamId = null } = options;
+  
+  // If this is a streaming request, use the streaming function
+  if (isStreaming && streamId) {
+    return streamAudio(streamId, onAudioStart, onAudioEnd);
+  }
   // Log the audio data URL (trimmed for readability)
   const logUrl = audioDataUrl ? 
     (audioDataUrl.length > 100 ? 
@@ -504,25 +702,52 @@ const playAudioFromDataUrl = async (audioDataUrl, onAudioStart, onAudioEnd) => {
  * @returns {Object} Object with playback controls
  */
 export const prepareAudio = (messageIdOrAudioData, text, onAudioStart, onAudioEnd, voiceName = 'sns', preset = 'fast') => {
-  // Handle case where first argument is an audio data URL object
-  if (messageIdOrAudioData && typeof messageIdOrAudioData === 'object' && messageIdOrAudioData.audio) {
-    const { audio, mimetype } = messageIdOrAudioData;
-    const audioDataUrl = `data:${mimetype || 'audio/wav'};base64,${audio}`;
-    
-    return {
-      stop: stopAudio,
-      play: () => playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd),
-      queue: () => {
-        // For simplicity, just play immediately when queued
-        return playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd);
-      },
-      getState: () => ({
-        isPlaying: activeAudioElements.size > 0,
-        currentPlaybackId: null,
-        queueLength: 0,
-        activeAudioCount: activeAudioElements.size
-      })
-    };
+  // Handle case where first argument is an audio data URL object or streaming config
+  if (messageIdOrAudioData && typeof messageIdOrAudioData === 'object') {
+    // Handle streaming audio
+    if (messageIdOrAudioData.streamId) {
+      const { streamId } = messageIdOrAudioData;
+      return {
+        stop: stopAudio,
+        play: () => playAudioFromDataUrl(null, onAudioStart, onAudioEnd, { 
+          isStreaming: true, 
+          streamId 
+        }),
+        queue: () => {
+          // For streaming, just play immediately when queued
+          return playAudioFromDataUrl(null, onAudioStart, onAudioEnd, { 
+            isStreaming: true, 
+            streamId 
+          });
+        },
+        getState: () => ({
+          isPlaying: activeStreams.has(streamId),
+          currentPlaybackId: streamId,
+          queueLength: 0,
+          activeAudioCount: activeStreams.size
+        })
+      };
+    }
+    // Handle direct audio data URL
+    else if (messageIdOrAudioData.audio) {
+      const { audio, mimetype } = messageIdOrAudioData;
+      const audioDataUrl = `data:${mimetype || 'audio/wav'};base64,${audio}`;
+      
+      return {
+        stop: stopAudio,
+        play: () => playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd),
+        queue: () => {
+          // For simplicity, just play immediately when queued
+          return playAudioFromDataUrl(audioDataUrl, onAudioStart, onAudioEnd);
+        },
+        getState: () => ({
+          isPlaying: activeAudioElements.size > 0,
+          currentPlaybackId: null,
+          queueLength: 0,
+          activeAudioCount: activeAudioElements.size
+        })
+      };
+    }
   }
   
   // Original behavior for text-to-speech

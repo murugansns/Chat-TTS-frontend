@@ -342,6 +342,8 @@
       let fullResponse = "";
       let lastUpdateTime = 0;
       const UPDATE_THROTTLE_MS = 30;
+      let streamId = response.headers.get('X-Stream-ID');
+      let audioController = null;
 
       const updateMessage = (newText, force = false) => {
         const now = Date.now();
@@ -353,7 +355,12 @@
         setMessages(prev =>
           prev.map(msg =>
             msg.id === messageId
-              ? { ...msg, text: cleanText, isStreaming: !force }
+              ? { 
+                  ...msg, 
+                  text: cleanText, 
+                  isStreaming: !force,
+                  streamId: streamId || msg.streamId
+                }
               : msg
           )
         );
@@ -361,6 +368,27 @@
 
       return new Promise(async (resolve, reject) => {
         try {
+          // If we have a stream ID, prepare for audio streaming
+          if (streamId) {
+            // Update the message with the stream ID
+            updateMessage(fullResponse, false);
+            
+            // Start audio streaming in the background
+            audioController = prepareAudio(
+              { streamId },
+              null,
+              () => console.log('Audio started'),
+              () => console.log('Audio ended'),
+              'sns',
+              'fast'
+            );
+            
+            // Start playing the audio stream
+            audioController.play().catch(err => {
+              console.error('Error starting audio stream:', err);
+            });
+          }
+          
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -426,7 +454,17 @@
                   
                   updateMessage(fullResponse, true);
 
-                  // Construct the full URL for the audio file
+                  // If we were streaming audio, clean up the audio controller
+                  if (audioController) {
+                    try {
+                      audioController.stop();
+                    } catch (e) {
+                      console.error('Error stopping audio controller:', e);
+                    }
+                    audioController = null;
+                  }
+
+                  // For non-streaming audio, handle the audio file URL
                   const baseUrl = 'http://192.168.1.218:8000';
                   const audioFile = data.audio_file || (data.text && data.text.audio_file);
                   const audioUrl = audioFile && (
@@ -443,7 +481,8 @@
                             ...msg, 
                             text: fullResponse, 
                             isStreaming: false, 
-                            audioFile: audioUrl 
+                            audioFile: audioUrl,
+                            streamId: null // Clear stream ID since we're done streaming
                           }
                         : msg
                     )
@@ -456,11 +495,31 @@
                   return resolve(fullResponse);
 
                 case "complete":
+                  // Clean up any audio controller if it exists
+                  if (audioController) {
+                    try {
+                      audioController.stop();
+                    } catch (e) {
+                      console.error('Error stopping audio controller on complete:', e);
+                    }
+                    audioController = null;
+                  }
+                  
                   // If we already have content from token events, ignore the complete event text
                   // to prevent duplicate content
                   if (fullResponse.trim().length > 0) {
-                    // Just finalize the message with what we have
+                    // Finalize the message with what we have
                     updateMessage(fullResponse, true);
+                    
+                    // Clear the stream ID if it exists
+                    setMessages(prev =>
+                      prev.map(msg =>
+                        msg.id === messageId
+                          ? { ...msg, streamId: null }
+                          : msg
+                      )
+                    );
+                    
                     return resolve(fullResponse);
                   }
                   
@@ -497,9 +556,29 @@
                     if (cleanText) {
                       fullResponse = cleanText;
                       updateMessage(fullResponse, true);
+                      
+                      // Clear the stream ID if it exists
+                      setMessages(prev =>
+                        prev.map(msg =>
+                          msg.id === messageId
+                            ? { ...msg, streamId: null }
+                            : msg
+                        )
+                      );
+                      
                       return resolve(fullResponse);
                     }
                   }
+                  
+                  // Clear the stream ID if it exists
+                  setMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === messageId
+                        ? { ...msg, streamId: null }
+                        : msg
+                    )
+                  );
+                  
                   return resolve('');
 
                 case "error":
@@ -510,6 +589,26 @@
           }
         } catch (err) {
           console.error("Stream read error:", err);
+          
+          // Clean up any audio controller if it exists
+          if (audioController) {
+            try {
+              audioController.stop();
+            } catch (e) {
+              console.error('Error stopping audio controller on error:', e);
+            }
+            audioController = null;
+          }
+          
+          // Clear the stream ID if it exists
+          setMessages(prev =>
+            prev.map(msg =>
+              msg.id === messageId
+                ? { ...msg, streamId: null, isStreaming: false }
+                : msg
+            )
+          );
+          
           reject(err);
         }
       });
