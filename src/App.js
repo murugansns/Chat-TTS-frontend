@@ -1,6 +1,7 @@
   import React, { useState, useRef, useEffect, useCallback } from 'react';
   import DOMPurify from 'dompurify';
   import { prepareAudio, stopAudio } from './utils/audioPlayer';
+  import Login from './components/Login';
   import './Chat.css';
 
 
@@ -243,7 +244,12 @@
     const [isStreaming, setIsStreaming] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [streamedText, setStreamedText] = useState('');
-    
+
+    // Authentication state
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [user, setUser] = useState(null);
+    const [authToken, setAuthToken] = useState('');
+
     const eventSourceRef = useRef(null);
     const messagesEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
@@ -292,6 +298,51 @@
         window.speechSynthesis.cancel();
         setIsSpeaking(false);
         audioPlayer.current.isPlaying = false;
+      }
+    }, []);
+
+    // Authentication handlers
+    const handleLogin = (userData, token) => {
+      setUser(userData);
+      setAuthToken(token);
+      setIsAuthenticated(true);
+    };
+
+    const handleLogout = () => {
+      setUser(null);
+      setAuthToken('');
+      setIsAuthenticated(false);
+      setMessages([]);
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+    };
+
+    // Check for existing authentication on component mount
+    useEffect(() => {
+      const storedToken = localStorage.getItem('authToken');
+      const storedUser = localStorage.getItem('user');
+
+      if (storedToken && storedUser) {
+        try {
+          // Parse the user data
+          const userData = JSON.parse(storedUser);
+
+          // Basic token validation - check if it's a proper JWT format
+          const tokenParts = storedToken.split('.');
+          if (tokenParts.length === 3) {
+            setUser(userData);
+            setAuthToken(storedToken);
+            setIsAuthenticated(true);
+          } else {
+            // Invalid token format, clear storage
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('user');
+          }
+        } catch (error) {
+          console.error('Error parsing stored authentication data:', error);
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('user');
+        }
       }
     }, []);
 
@@ -779,142 +830,156 @@
 
     return (
       <div className="h-screen bg-gray-100 flex flex-col">
-        <div className="flex-1 bg-white flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="bg-primary text-white p-4">
-            <h1 className="text-xl font-semibold">RAG Chatbot</h1>
-            <p className="text-white/80 text-sm">Ask me anything!</p>
-          </div>
-
-          {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.length === 0 && (
-              <div className="text-center text-gray-500 mt-8">
-                <p>Start chatting with the AI assistant!</p>
+        {!isAuthenticated ? (
+          <Login onLogin={handleLogin} />
+        ) : (
+          <>
+            <div className="flex-1 bg-white flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="bg-primary text-white p-4 flex justify-between items-center">
+                <div>
+                  <h1 className="text-xl font-semibold">RAG Chatbot</h1>
+                  <p className="text-white/80 text-sm">Welcome back, {user?.name}!</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm font-medium transition-colors"
+                >
+                  Logout
+                </button>
               </div>
-            )}
-            
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`chat-message ${message.sender}-message`}>
-                  <div className="chat-message-content">
-                    <div className="message-content-wrapper">
-                    <div 
-                      className="message-text"
-                      dangerouslySetInnerHTML={{
-                        __html: message.isStreaming
-                          ? DOMPurify.sanitize(message.text)  // ✅ raw growing text (no bullets)
-                          : formatMessageText(message.text),  // ✅ format once finished
-                      }}
-                    />
 
-                      {isStreaming && message.id === 'typing' && (
-                        <div className="typing-indicator">
-                          <span></span>
-                          <span></span>
-                          <span></span>
+              {/* Chat Messages */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {messages.length === 0 && (
+                  <div className="text-center text-gray-500 mt-8">
+                    <p>Start chatting with the AI assistant!</p>
+                  </div>
+                )}
+                
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`chat-message ${message.sender}-message`}>
+                      <div className="chat-message-content">
+                        <div className="message-content-wrapper">
+                        <div 
+                          className="message-text"
+                          dangerouslySetInnerHTML={{
+                            __html: message.isStreaming
+                              ? DOMPurify.sanitize(message.text)  // ✅ raw growing text (no bullets)
+                              : formatMessageText(message.text),  // ✅ format once finished
+                          }}
+                        />
+
+                          {isStreaming && message.id === 'typing' && (
+                            <div className="typing-indicator">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div className="message-meta">
-                      <span className={`timestamp ${message.sender === 'user' ? 'text-white/80' : 'text-gray-500'}`}>
-                        {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                        <div className="message-meta">
+                          <span className={`timestamp ${message.sender === 'user' ? 'text-white/80' : 'text-gray-500'}`}>
+                            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          
+                          {message.sender === 'bot' && message.audioFile && (
+                            <button
+                              onClick={() => handlePlayAudio(message.audioFile, message.text)}
+                              className="audio-control ml-2"
+                              disabled={isLoading}
+                              aria-label={isSpeaking && audioPlayer.current.isPlaying ? 'Pause audio' : 'Play audio'}
+                            >
+                              {isSpeaking && audioPlayer.current.isPlaying ? (
+                                <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                       
-                      {message.sender === 'bot' && message.audioFile && (
+                      {message.sender === 'bot' && !message.audioFile && message.text && (
                         <button
-                          onClick={() => handlePlayAudio(message.audioFile, message.text)}
-                          className="audio-control ml-2"
+                          onClick={() => handleSpeak(message.text, message.id)}
+                          className="audio-control self-center"
                           disabled={isLoading}
-                          aria-label={isSpeaking && audioPlayer.current.isPlaying ? 'Pause audio' : 'Play audio'}
+                          aria-label={isSpeaking === message.id ? 'Stop speech' : 'Read aloud'}
                         >
-                          {isSpeaking && audioPlayer.current.isPlaying ? (
+                          {isSpeaking === message.id ? (
                             <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
                               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                             </svg>
                           ) : (
                             <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                              <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
                             </svg>
                           )}
                         </button>
                       )}
                     </div>
                   </div>
-                  
-                  {message.sender === 'bot' && !message.audioFile && message.text && (
+                ))}
+
+                {/* Loading indicator */}
+                {isLoading && (
+                  <div className="loading-dots">
+                    <div className="loading-dot"></div>
+                    <div className="loading-dot"></div>
+                    <div className="loading-dot"></div>
+                  </div>
+                )}
+                
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Input Section */}
+              <div className="flex-shrink-0 p-4 border-t border-gray-200 bg-white">
+                <div className="flex gap-2">
+                  <div className="flex-1 relative">
+                    <textarea
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      placeholder="Type your message..."
+                      className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent resize-none"
+                      rows="1"
+                      style={{ minHeight: '44px', maxHeight: '120px' }}
+                      disabled={isLoading || isStreaming}
+                    />
                     <button
-                      onClick={() => handleSpeak(message.text, message.id)}
-                      className="audio-control self-center"
-                      disabled={isLoading}
-                      aria-label={isSpeaking === message.id ? 'Stop speech' : 'Read aloud'}
+                      onClick={() => {
+                        if (inputValue.trim()) {
+                          handleSendMessage(inputValue);
+                          setInputValue('');
+                        }
+                      }}
+                      disabled={!inputValue.trim() || isLoading || isStreaming}
+                      className={`absolute right-2 bottom-2 p-1 rounded-full ${
+                        !inputValue.trim() || isLoading || isStreaming
+                          ? 'text-gray-400 cursor-not-allowed'
+                          : 'text-primary hover:bg-gray-100'
+                      }`}
                     >
-                      {isSpeaking === message.id ? (
-                        <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
-                        </svg>
-                      )}
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                      </svg>
                     </button>
-                  )}
+                  </div>
                 </div>
               </div>
-            ))}
-
-            {/* Loading indicator */}
-            {isLoading && (
-              <div className="loading-dots">
-                <div className="loading-dot"></div>
-                <div className="loading-dot"></div>
-                <div className="loading-dot"></div>
-              </div>
-            )}
-            
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Section */}
-          <div className="flex-shrink-0 p-4 border-t border-gray-200 bg-white">
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <textarea
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Type your message..."
-                  className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent resize-none"
-                  rows="1"
-                  style={{ minHeight: '44px', maxHeight: '120px' }}
-                  disabled={isLoading || isStreaming}
-                />
-                <button
-                  onClick={() => {
-                    if (inputValue.trim()) {
-                      handleSendMessage(inputValue);
-                      setInputValue('');
-                    }
-                  }}
-                  disabled={!inputValue.trim() || isLoading || isStreaming}
-                  className={`absolute right-2 bottom-2 p-1 rounded-full ${
-                    !inputValue.trim() || isLoading || isStreaming
-                      ? 'text-gray-400 cursor-not-allowed'
-                      : 'text-primary hover:bg-gray-100'
-                  }`}
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                  </svg>
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     );
   }
